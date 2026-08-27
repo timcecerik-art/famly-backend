@@ -84,11 +84,66 @@ const Location = mongoose.model('Location', new mongoose.Schema({
 // ---------------------------------------------------------------------------
 
 // --- 1. TASKS ---
-app.get('/api/tasks', async (req, res) => res.json(await Task.find()));
-app.post('/api/tasks', async (req, res) => res.json(await new Task(req.body).save()));
-app.put('/api/tasks/:id', async (req, res) => {
-  res.json(await Task.findByIdAndUpdate(req.params.id, { isDone: req.body.isDone }, { new: true }));
+// --- TASK SCHEMA & MODEL ---
+const TaskSchema = new mongoose.Schema({
+  title: String,
+  assignedToMemberId: String,
+  createdByMemberId: String,     // Wer hat die Aufgabe erstellt?
+  isDone: { type: Boolean, default: false },
+  dueDate: Date,                 // Faelligkeitsdatum
+  timeSlot: String,              // 'morning' (06-12), 'afternoon' (12-18), 'evening' (18-21), 'anytime'
+  recurring: String,             // 'none', 'daily', 'weekly'
+  estimatedMinutes: { type: Number, default: 15 }, // Zeitaufwand in Min = XP
+  xpApproved: { type: Boolean, default: false },  // Von Mama/Vincent freigegeben?
+  approvedBy: String
 });
+const Task = mongoose.model('Task', TaskSchema, 'tasks');
+
+// --- USER XP SCHEMA & MODEL ---
+const UserXpSchema = new mongoose.Schema({
+  memberId: { type: String, unique: true },
+  xp: { type: Number, default: 0 }
+});
+const UserXp = mongoose.model('UserXp', UserXpSchema, 'user_xps');
+
+// --- TASKS API ---
+app.get('/api/tasks', async (req, res) => res.json(await Task.find()));
+
+app.post('/api/tasks', async (req, res) => {
+  const newTask = new Task(req.body);
+  res.json(await newTask.save());
+});
+
+app.put('/api/tasks/:id', async (req, res) => {
+  res.json(await Task.findByIdAndUpdate(req.params.id, req.body, { new: true }));
+});
+
+// XP Freigabe durch Mama oder Vincent
+app.put('/api/tasks/:id/approve-xp', async (req, res) => {
+  const { approverId } = req.body; // Muss Mama (1) oder Vincent (2) sein
+  if (approverId !== '1' && approverId !== '2') {
+    return res.status(403).json({ error: 'Nur Mama und Vincent können XPs freigeben!' });
+  }
+
+  const task = await Task.findById(req.params.id);
+  if (!task || task.xpApproved) return res.json(task);
+
+  task.xpApproved = true;
+  task.approvedBy = approverId;
+  await task.save();
+
+  // Schreiben der XP gutschreiben auf das Konto des ZUGEWIESENEN Mitglieds
+  await UserXp.findOneAndUpdate(
+    { memberId: task.assignedToMemberId },
+    { $inc: { xp: task.estimatedMinutes } },
+    { upsert: true, new: true }
+  );
+
+  res.json(task);
+});
+
+// --- XP LEADERBOARD API ---
+app.get('/api/xp', async (req, res) => res.json(await UserXp.find()));
 
 // --- 2. EVENTS ---
 app.get('/api/events', async (req, res) => res.json(await Event.find()));
