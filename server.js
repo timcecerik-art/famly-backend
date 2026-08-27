@@ -7,52 +7,67 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// MongoDB Verbindung
-const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://timcecerik_db_user:Timcecerik1906@famly.r2auhfs.mongodb.net/"
+// MongoDB Verbindung (Verwendet Environment Variable oder Fallback-URI)
+const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://timcecerik_db_user:Timcecerik1906%21@famly.r2auhfs.mongodb.net/famly?retryWrites=true&w=majority";
 
 mongoose.connect(MONGO_URI)
   .then(() => console.log("Mit MongoDB verbunden!"))
   .catch(err => console.error("MongoDB Fehler:", err));
 
 // ---------------------------------------------------------------------------
-// MONGOOSE SCHEMAS & MODELS (Klar benannte Collections in Atlas)
+// MONGOOSE SCHEMAS & MODELS
 // ---------------------------------------------------------------------------
 
 // 1. Aufgaben (Collection: tasks)
-const Task = mongoose.model('Task', new mongoose.Schema({
+const TaskSchema = new mongoose.Schema({
   title: String,
   assignedToMemberId: String,
-  isDone: { type: Boolean, default: false }
-}), 'tasks');
+  createdByMemberId: String,
+  isDone: { type: Boolean, default: false },
+  dueDate: Date,
+  timeSlot: String,        // 'morning', 'afternoon', 'evening', 'anytime'
+  recurring: String,       // 'none', 'daily', 'weekly'
+  estimatedMinutes: { type: Number, default: 15 },
+  xpApproved: { type: Boolean, default: false },
+  approvedBy: String
+});
+const Task = mongoose.model('Task', TaskSchema, 'tasks');
 
-// 2. Termine (Collection: events)
+// 2. XP Konto (Collection: user_xps)
+const UserXpSchema = new mongoose.Schema({
+  memberId: { type: String, unique: true },
+  xp: { type: Number, default: 0 }
+});
+const UserXp = mongoose.model('UserXp', UserXpSchema, 'user_xps');
+
+// 3. Termine (Collection: events)
 const Event = mongoose.model('Event', new mongoose.Schema({
   title: String,
   date: Date,
   createdByMemberId: String
 }), 'events');
 
-// 3. Nachrichten / Chat (Collection: chat_messages)
+// 4. Chat (Collection: chat_messages)
 const ChatMessage = mongoose.model('ChatMessage', new mongoose.Schema({
   senderName: String,
   text: String,
   timestamp: { type: Date, default: Date.now }
 }), 'chat_messages');
 
-// 4. Finanzen (Collection: finances)
+// 5. Finanzen (Collection: finances)
 const Finance = mongoose.model('Finance', new mongoose.Schema({
   title: String,
   amount: Number,
   isExpense: Boolean
 }), 'finances');
 
-// 5. Einkaufsliste (Collection: shopping_items)
+// 6. Einkaufsliste (Collection: shopping_items)
 const ShoppingItem = mongoose.model('ShoppingItem', new mongoose.Schema({
   title: String,
   isBought: { type: Boolean, default: false }
 }), 'shopping_items');
 
-// 6. Stundenplan (Collection: schedule_lessons)
+// 7. Stundenplan (Collection: schedule_lessons)
 const Lesson = mongoose.model('Lesson', new mongoose.Schema({
   memberId: String,
   day: String,
@@ -62,18 +77,18 @@ const Lesson = mongoose.model('Lesson', new mongoose.Schema({
   isCanceled: { type: Boolean, default: false }
 }), 'schedule_lessons');
 
-// 7. Dokumente (Collection: documents)
+// 8. Dokumente (Collection: documents)
 const Document = mongoose.model('Document', new mongoose.Schema({
   name: String
 }), 'documents');
 
-// 8. Essensplan (Collection: meal_plans)
+// 9. Essensplan (Collection: meal_plans)
 const MealPlan = mongoose.model('MealPlan', new mongoose.Schema({
   day: { type: String, unique: true },
   meal: String
 }), 'meal_plans');
 
-// 9. Standorte (Collection: locations)
+// 10. Standorte (Collection: locations)
 const Location = mongoose.model('Location', new mongoose.Schema({
   memberName: { type: String, unique: true },
   location: String
@@ -83,46 +98,16 @@ const Location = mongoose.model('Location', new mongoose.Schema({
 // ENDPUNKTE (API)
 // ---------------------------------------------------------------------------
 
-// --- 1. TASKS ---
-// --- TASK SCHEMA & MODEL ---
-const TaskSchema = new mongoose.Schema({
-  title: String,
-  assignedToMemberId: String,
-  createdByMemberId: String,     // Wer hat die Aufgabe erstellt?
-  isDone: { type: Boolean, default: false },
-  dueDate: Date,                 // Faelligkeitsdatum
-  timeSlot: String,              // 'morning' (06-12), 'afternoon' (12-18), 'evening' (18-21), 'anytime'
-  recurring: String,             // 'none', 'daily', 'weekly'
-  estimatedMinutes: { type: Number, default: 15 }, // Zeitaufwand in Min = XP
-  xpApproved: { type: Boolean, default: false },  // Von Mama/Vincent freigegeben?
-  approvedBy: String
-});
-const Task = mongoose.model('Task', TaskSchema, 'tasks');
-
-// --- USER XP SCHEMA & MODEL ---
-const UserXpSchema = new mongoose.Schema({
-  memberId: { type: String, unique: true },
-  xp: { type: Number, default: 0 }
-});
-const UserXp = mongoose.model('UserXp', UserXpSchema, 'user_xps');
-
-// --- TASKS API ---
+// --- TASKS ---
 app.get('/api/tasks', async (req, res) => res.json(await Task.find()));
-
-app.post('/api/tasks', async (req, res) => {
-  const newTask = new Task(req.body);
-  res.json(await newTask.save());
-});
-
+app.post('/api/tasks', async (req, res) => res.json(await new Task(req.body).save()));
 app.put('/api/tasks/:id', async (req, res) => {
   res.json(await Task.findByIdAndUpdate(req.params.id, req.body, { new: true }));
 });
-
-// XP Freigabe durch Mama oder Vincent
 app.put('/api/tasks/:id/approve-xp', async (req, res) => {
-  const { approverId } = req.body; // Muss Mama (1) oder Vincent (2) sein
+  const { approverId } = req.body;
   if (approverId !== '1' && approverId !== '2') {
-    return res.status(403).json({ error: 'Nur Mama und Vincent können XPs freigeben!' });
+    return res.status(403).json({ error: 'Nur Mama und Vincent dürfen XP freigeben!' });
   }
 
   const task = await Task.findById(req.params.id);
@@ -132,7 +117,6 @@ app.put('/api/tasks/:id/approve-xp', async (req, res) => {
   task.approvedBy = approverId;
   await task.save();
 
-  // Schreiben der XP gutschreiben auf das Konto des ZUGEWIESENEN Mitglieds
   await UserXp.findOneAndUpdate(
     { memberId: task.assignedToMemberId },
     { $inc: { xp: task.estimatedMinutes } },
@@ -142,10 +126,10 @@ app.put('/api/tasks/:id/approve-xp', async (req, res) => {
   res.json(task);
 });
 
-// --- XP LEADERBOARD API ---
+// --- XP LEADERBOARD ---
 app.get('/api/xp', async (req, res) => res.json(await UserXp.find()));
 
-// --- 2. EVENTS ---
+// --- EVENTS ---
 app.get('/api/events', async (req, res) => res.json(await Event.find()));
 app.post('/api/events', async (req, res) => res.json(await new Event(req.body).save()));
 app.delete('/api/events/:id', async (req, res) => {
@@ -153,27 +137,27 @@ app.delete('/api/events/:id', async (req, res) => {
   res.json({ success: true });
 });
 
-// --- 3. CHAT MESSAGES ---
+// --- CHAT MESSAGES ---
 app.get('/api/messages', async (req, res) => res.json(await ChatMessage.find().sort({ timestamp: 1 })));
 app.post('/api/messages', async (req, res) => res.json(await new ChatMessage(req.body).save()));
 
-// --- 4. FINANCES ---
+// --- FINANCES ---
 app.get('/api/finances', async (req, res) => res.json(await Finance.find()));
 app.post('/api/finances', async (req, res) => res.json(await new Finance(req.body).save()));
 
-// --- 5. SHOPPING ITEMS ---
+// --- SHOPPING ---
 app.get('/api/shopping', async (req, res) => res.json(await ShoppingItem.find()));
 app.post('/api/shopping', async (req, res) => res.json(await new ShoppingItem(req.body).save()));
 app.put('/api/shopping/:id', async (req, res) => {
   res.json(await ShoppingItem.findByIdAndUpdate(req.params.id, { isBought: req.body.isBought }, { new: true }));
 });
 
-// --- 6. LESSONS ---
+// --- LESSONS ---
 app.get('/api/lessons', async (req, res) => res.json(await Lesson.find()));
 app.post('/api/lessons', async (req, res) => res.json(await new Lesson(req.body).save()));
 app.put('/api/lessons/:id', async (req, res) => res.json(await Lesson.findByIdAndUpdate(req.params.id, req.body, { new: true })));
 
-// --- 7. DOCUMENTS ---
+// --- DOCUMENTS ---
 app.get('/api/documents', async (req, res) => res.json(await Document.find()));
 app.post('/api/documents', async (req, res) => res.json(await new Document(req.body).save()));
 app.delete('/api/documents/:id', async (req, res) => {
@@ -181,7 +165,7 @@ app.delete('/api/documents/:id', async (req, res) => {
   res.json({ success: true });
 });
 
-// --- 8. MEAL PLAN ---
+// --- MEAL PLAN ---
 app.get('/api/meals', async (req, res) => res.json(await MealPlan.find()));
 app.put('/api/meals', async (req, res) => {
   const { day, meal } = req.body;
@@ -189,7 +173,7 @@ app.put('/api/meals', async (req, res) => {
   res.json(updated);
 });
 
-// --- 9. LOCATIONS ---
+// --- LOCATIONS ---
 app.get('/api/locations', async (req, res) => res.json(await Location.find()));
 app.put('/api/locations', async (req, res) => {
   const { memberName, location } = req.body;
